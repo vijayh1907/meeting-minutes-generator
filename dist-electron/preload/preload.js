@@ -1,0 +1,7 @@
+"use strict";
+const electron = require("electron");
+electron.contextBridge.exposeInMainWorld("electron", {
+  // expose limited, safe APIs here in the future
+  platform: process.platform
+});
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicHJlbG9hZC5qcyIsInNvdXJjZXMiOlsiLi4vLi4vZWxlY3Ryb24vcHJlbG9hZC50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBjb250ZXh0QnJpZGdlIH0gZnJvbSAnZWxlY3Ryb24nO1xuXG5jb250ZXh0QnJpZGdlLmV4cG9zZUluTWFpbldvcmxkKCdlbGVjdHJvbicsIHtcbiAgLy8gZXhwb3NlIGxpbWl0ZWQsIHNhZmUgQVBJcyBoZXJlIGluIHRoZSBmdXR1cmVcbiAgcGxhdGZvcm06IHByb2Nlc3MucGxhdGZvcm0sXG59KTtcblxuZXhwb3J0IHt9O1xuXG5cbiJdLCJuYW1lcyI6WyJjb250ZXh0QnJpZGdlIl0sIm1hcHBpbmdzIjoiOztBQUVBQSxTQUFBQSxjQUFjLGtCQUFrQixZQUFZO0FBQUE7QUFBQSxFQUUxQyxVQUFVLFFBQVE7QUFDcEIsQ0FBQzsifQ==
