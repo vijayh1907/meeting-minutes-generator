@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -19,9 +19,11 @@ import {
   MoreHorizontal,
   Eye,
   Edit,
-  Trash2
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { Participant, ActionItem } from '../App';
+import { buildApiUrl, getApiEndpoint } from '../config/api';
 
 export interface HistoricalMeeting {
   id: string;
@@ -44,169 +46,40 @@ interface DashboardProps {
   onViewMeeting: (meeting: HistoricalMeeting) => void;
 }
 
-// Mock historical meeting data with recent dates
-const mockMeetings: HistoricalMeeting[] = [
-  {
-    id: '1',
-    title: 'Weekly Team Standup',
-    date: '2025-01-27',
-    status: 'completed',
-    participants: [
-      { id: '1', name: 'John Smith', email: 'john.smith@company.com' },
-      { id: '2', name: 'Sarah Johnson', email: 'sarah.johnson@company.com' },
-      { id: '8', name: 'Jennifer Garcia', email: 'jennifer.garcia@company.com' },
-    ],
-    discussionCount: 8,
-    questionCount: 3,
-    actionCount: 6,
-    fileName: 'weekly_standup_jan27.txt',
-    fileSize: '1.1 MB',
-    createdAt: '2025-01-27T09:15:00Z',
-    lastModified: '2025-01-27T09:45:00Z',
-    emailSent: true,
-  },
-  {
-    id: '2',
-    title: 'Q1 Budget Planning Session',
-    date: '2025-01-25',
-    status: 'completed',
-    participants: [
-      { id: '3', name: 'Mike Chen', email: 'mike.chen@company.com' },
-      { id: '5', name: 'Robert Wilson', email: 'robert.wilson@company.com' },
-      { id: '6', name: 'Lisa Anderson', email: 'lisa.anderson@company.com' },
-      { id: '7', name: 'David Brown', email: 'david.brown@company.com' },
-    ],
-    discussionCount: 15,
-    questionCount: 12,
-    actionCount: 18,
-    fileName: 'q1_budget_planning.txt',
-    fileSize: '2.8 MB',
-    createdAt: '2025-01-25T14:30:00Z',
-    lastModified: '2025-01-25T16:15:00Z',
-    emailSent: true,
-  },
-  {
-    id: '3',
-    title: 'Product Demo Review',
-    date: '2025-01-24',
-    status: 'processing',
-    participants: [
-      { id: '2', name: 'Sarah Johnson', email: 'sarah.johnson@company.com' },
-      { id: '4', name: 'Emily Davis', email: 'emily.davis@company.com' },
-      { id: '9', name: 'Alex Thompson', email: 'alex.thompson@company.com' },
-    ],
-    discussionCount: 0,
-    questionCount: 0,
-    actionCount: 0,
-    fileName: 'product_demo_review.txt',
-    fileSize: '1.6 MB',
-    createdAt: '2025-01-24T15:00:00Z',
-    lastModified: '2025-01-24T15:00:00Z',
-    emailSent: false,
-  },
-  {
-    id: '4',
-    title: 'Client Strategy Workshop',
-    date: '2025-01-22',
-    status: 'completed',
-    participants: [
-      { id: '1', name: 'John Smith', email: 'john.smith@company.com' },
-      { id: '4', name: 'Emily Davis', email: 'emily.davis@company.com' },
-      { id: '10', name: 'Maria Rodriguez', email: 'maria.rodriguez@company.com' },
-      { id: '11', name: 'Kevin Park', email: 'kevin.park@company.com' },
-    ],
-    discussionCount: 22,
-    questionCount: 16,
-    actionCount: 14,
-    fileName: 'client_strategy_workshop.txt',
-    fileSize: '3.2 MB',
-    createdAt: '2025-01-22T10:00:00Z',
-    lastModified: '2025-01-22T12:30:00Z',
-    emailSent: true,
-  },
-  {
-    id: '5',
-    title: 'Sprint Retrospective',
-    date: '2025-01-20',
-    status: 'completed',
-    participants: [
-      { id: '2', name: 'Sarah Johnson', email: 'sarah.johnson@company.com' },
-      { id: '3', name: 'Mike Chen', email: 'mike.chen@company.com' },
-      { id: '8', name: 'Jennifer Garcia', email: 'jennifer.garcia@company.com' },
-    ],
-    discussionCount: 9,
-    questionCount: 7,
-    actionCount: 11,
-    fileName: 'sprint_retrospective_jan20.txt',
-    fileSize: '1.9 MB',
-    createdAt: '2025-01-20T16:00:00Z',
-    lastModified: '2025-01-20T17:15:00Z',
-    emailSent: true,
-  },
-  {
-    id: '6',
-    title: 'Marketing Campaign Kickoff',
-    date: '2025-01-18',
-    status: 'failed',
-    participants: [
-      { id: '6', name: 'Lisa Anderson', email: 'lisa.anderson@company.com' },
-      { id: '7', name: 'David Brown', email: 'david.brown@company.com' },
-      { id: '9', name: 'Alex Thompson', email: 'alex.thompson@company.com' },
-    ],
-    discussionCount: 0,
-    questionCount: 0,
-    actionCount: 0,
-    fileName: 'marketing_kickoff_jan18.txt',
-    fileSize: '2.1 MB',
-    createdAt: '2025-01-18T11:00:00Z',
-    lastModified: '2025-01-18T11:03:00Z',
-    emailSent: false,
-  },
-  {
-    id: '7',
-    title: 'Architecture Review Meeting',
-    date: '2025-01-15',
-    status: 'completed',
-    participants: [
-      { id: '3', name: 'Mike Chen', email: 'mike.chen@company.com' },
-      { id: '5', name: 'Robert Wilson', email: 'robert.wilson@company.com' },
-      { id: '12', name: 'Priya Patel', email: 'priya.patel@company.com' },
-    ],
-    discussionCount: 13,
-    questionCount: 8,
-    actionCount: 9,
-    fileName: 'architecture_review_jan15.txt',
-    fileSize: '2.4 MB',
-    createdAt: '2025-01-15T14:00:00Z',
-    lastModified: '2025-01-15T15:30:00Z',
-    emailSent: true,
-  },
-  {
-    id: '8',
-    title: 'Quarterly Business Review Draft',
-    date: '2025-01-12',
-    status: 'draft',
-    participants: [
-      { id: '1', name: 'John Smith', email: 'john.smith@company.com' },
-      { id: '5', name: 'Robert Wilson', email: 'robert.wilson@company.com' },
-      { id: '6', name: 'Lisa Anderson', email: 'lisa.anderson@company.com' },
-      { id: '10', name: 'Maria Rodriguez', email: 'maria.rodriguez@company.com' },
-    ],
-    discussionCount: 18,
-    questionCount: 11,
-    actionCount: 13,
-    fileName: 'quarterly_review_draft.txt',
-    fileSize: '3.5 MB',
-    createdAt: '2025-01-12T13:00:00Z',
-    lastModified: '2025-01-12T14:45:00Z',
-    emailSent: false,
-  },
-];
+
+
+
 
 export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('date');
+  const [meetings, setMeetings] = useState<HistoricalMeeting[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch meetings from API
+  useEffect(() => {
+    const fetchMeetings = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(buildApiUrl(getApiEndpoint('GET_MEETINGS')));
+        if (!response.ok) {
+          throw new Error(`Failed to fetch meetings: ${response.status}`);
+        }
+        const data = await response.json();
+        setMeetings(data);
+      } catch (err: any) {
+        setError(err.message || 'Failed to fetch meetings');
+        // Fallback to empty array
+        setMeetings([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMeetings();
+  }, []);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -223,7 +96,7 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
     }
   };
 
-  const filteredMeetings = mockMeetings
+  const filteredMeetings = meetings
     .filter(meeting => {
       const matchesSearch = meeting.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            meeting.participants.some(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -244,10 +117,12 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
     });
 
   const getStats = () => {
-    const total = mockMeetings.length;
-    const completed = mockMeetings.filter(m => m.status === 'completed').length;
-    const processing = mockMeetings.filter(m => m.status === 'processing').length;
-    const totalActions = mockMeetings.reduce((sum, m) => sum + m.actionCount, 0);
+    const total = meetings.length;
+    const completed = meetings.filter(m => m.status === 'completed').length;
+    const processing = meetings.filter(m => m.status === 'processing').length;
+    const totalActions = meetings
+      .filter(m => m.status === 'completed' && typeof m.actionCount === 'number')
+      .reduce((sum, m) => sum + m.actionCount, 0);
     
     return { total, completed, processing, totalActions };
   };
@@ -268,6 +143,28 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
       minute: '2-digit'
     });
   };
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+        <Loader2 className="w-12 h-12 animate-spin text-primary" />
+        <h3 className="text-lg font-medium">Loading meetings...</h3>
+        <p className="text-muted-foreground">Fetching your meeting data</p>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+        <h3 className="text-lg font-medium text-red-600">Failed to load meetings</h3>
+        <p className="text-muted-foreground">{error}</p>
+        <Button onClick={() => window.location.reload()}>Retry</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -484,10 +381,7 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
                         <Eye className="w-4 h-4 mr-1" />
                         View
                       </Button>
-                      <Button variant="outline" size="sm">
-                        <Download className="w-4 h-4 mr-1" />
-                        Export
-                      </Button>
+
                     </>
                   )}
                   {meeting.status === 'draft' && (

@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { MessageSquare, HelpCircle, CheckSquare, Edit, Save, X } from 'lucide-react';
+import { MessageSquare, HelpCircle, CheckSquare, Edit, Save, X, VolumeX } from 'lucide-react';
 import { MeetingData, ClassifiedItem } from '../App';
 
 interface ReviewScreenProps {
@@ -17,57 +17,7 @@ interface ReviewScreenProps {
   canGoPrevious: boolean;
 }
 
-// Mock AI-generated classified content
-const mockClassifiedItems: ClassifiedItem[] = [
-  {
-    id: '1',
-    content: 'The team discussed the current quarterly results which show a 15% increase in customer acquisition compared to last quarter.',
-    type: 'discussion',
-    speaker: 'John Smith'
-  },
-  {
-    id: '2',
-    content: 'We need to finalize the budget allocation for the upcoming marketing campaign by next Friday.',
-    type: 'action',
-    speaker: 'Sarah Johnson'
-  },
-  {
-    id: '3',
-    content: 'What is the expected timeline for the new product launch?',
-    type: 'question',
-    speaker: 'Mike Chen'
-  },
-  {
-    id: '4',
-    content: 'The development team provided updates on the current sprint progress, indicating that 80% of planned features are complete.',
-    type: 'discussion',
-    speaker: 'Emily Davis'
-  },
-  {
-    id: '5',
-    content: 'How will we handle the resource allocation for the Q2 project?',
-    type: 'question',
-    speaker: 'Robert Wilson'
-  },
-  {
-    id: '6',
-    content: 'Schedule a follow-up meeting with the client to discuss project requirements in detail.',
-    type: 'action',
-    speaker: 'Lisa Anderson'
-  },
-  {
-    id: '7',
-    content: 'The sales team reported that the new pricing strategy has resulted in a 23% improvement in conversion rates.',
-    type: 'discussion',
-    speaker: 'David Brown'
-  },
-  {
-    id: '8',
-    content: 'Prepare the quarterly performance report and distribute to all stakeholders before the board meeting.',
-    type: 'action',
-    speaker: 'Jennifer Garcia'
-  }
-];
+// Classified items are now provided by API via UploadScreen and stored in meetingData
 
 export function ReviewScreen({
   meetingData,
@@ -80,24 +30,8 @@ export function ReviewScreen({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [activeTab, setActiveTab] = useState('all');
-  const [processing, setProcessing] = useState(true);
-
-  useEffect(() => {
-    // Simulate AI processing
-    if (meetingData.classifiedItems.length === 0) {
-      setProcessing(true);
-      const timer = setTimeout(() => {
-        setMeetingData({
-          ...meetingData,
-          classifiedItems: mockClassifiedItems,
-        });
-        setProcessing(false);
-      }, 3000);
-      return () => clearTimeout(timer);
-    } else {
-      setProcessing(false);
-    }
-  }, []);
+  const [processing] = useState(false);
+  const [showMvpPopup, setShowMvpPopup] = useState(false);
 
   const handleEdit = (item: ClassifiedItem) => {
     setEditingId(item.id);
@@ -120,7 +54,7 @@ export function ReviewScreen({
     setEditContent('');
   };
 
-  const handleTypeChange = (itemId: string, newType: 'discussion' | 'question' | 'action') => {
+  const handleTypeChange = (itemId: string, newType: 'discussion' | 'question' | 'action' | 'noise') => {
     setMeetingData({
       ...meetingData,
       classifiedItems: meetingData.classifiedItems.map(item =>
@@ -129,9 +63,27 @@ export function ReviewScreen({
     });
   };
 
+  const handleContinueToActionAssignment = () => {
+    setShowMvpPopup(true);
+  };
+
   const getFilteredItems = () => {
-    if (activeTab === 'all') return meetingData.classifiedItems;
-    return meetingData.classifiedItems.filter(item => item.type === activeTab);
+    // Only show items that have a rawTranscriptLine starting with time pattern
+    const timePatternItems = meetingData.classifiedItems.filter(item => 
+      item.rawTranscriptLine && 
+      /^\*\*\[\d{2}:\d{2}:\d{2}\]/.test(item.rawTranscriptLine)
+    );
+    
+    if (activeTab === 'all') {
+      // Show all items except noise in the "All" tab
+      return timePatternItems.filter(item => item.type !== 'noise');
+    } else if (activeTab === 'noise') {
+      // Show only noise items in the "Noise" tab
+      return timePatternItems.filter(item => item.type === 'noise');
+    } else {
+      // Show items of the specific type (excluding noise)
+      return timePatternItems.filter(item => item.type === activeTab);
+    }
   };
 
   const getTypeIcon = (type: string) => {
@@ -142,6 +94,8 @@ export function ReviewScreen({
         return <HelpCircle className="w-4 h-4" />;
       case 'action':
         return <CheckSquare className="w-4 h-4" />;
+      case 'noise':
+        return <VolumeX className="w-4 h-4" />;
       default:
         return null;
     }
@@ -155,27 +109,46 @@ export function ReviewScreen({
         return 'bg-orange-50 text-orange-700 border-orange-200';
       case 'action':
         return 'bg-green-50 text-green-700 border-green-200';
+      case 'noise':
+        return 'bg-gray-50 text-gray-700 border-gray-200';
       default:
         return 'bg-gray-50 text-gray-700 border-gray-200';
     }
   };
 
   const getCounts = () => {
-    const discussions = meetingData.classifiedItems.filter(item => item.type === 'discussion').length;
-    const questions = meetingData.classifiedItems.filter(item => item.type === 'question').length;
-    const actions = meetingData.classifiedItems.filter(item => item.type === 'action').length;
-    return { discussions, questions, actions };
+    // Get all time-pattern items
+    const timePatternItems = meetingData.classifiedItems.filter(item => 
+      item.rawTranscriptLine && 
+      /^\*\*\[\d{2}:\d{2}:\d{2}\]/.test(item.rawTranscriptLine)
+    );
+    
+    // Count main categories (excluding noise)
+    const discussions = timePatternItems.filter(item => item.type === 'discussion').length;
+    const questions = timePatternItems.filter(item => item.type === 'question').length;
+    const actions = timePatternItems.filter(item => item.type === 'action').length;
+    
+    // Count noise items separately
+    const noise = timePatternItems.filter(item => item.type === 'noise').length;
+    
+    return { discussions, questions, actions, noise };
   };
 
   const counts = getCounts();
 
-  if (processing) {
+  // Check if there are any time-pattern items at all (including noise)
+  const allTimePatternItems = meetingData.classifiedItems.filter(item => 
+    item.rawTranscriptLine && 
+    /^\*\*\[\d{2}:\d{2}:\d{2}\]/.test(item.rawTranscriptLine)
+  );
+  
+  // If there are no time-pattern items at all, show an empty state
+  if (!allTimePatternItems || allTimePatternItems.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[500px] space-y-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-        <h3 className="text-lg font-medium">Processing Transcript...</h3>
+      <div className="flex flex-col items-center justify-center min-h-[300px] space-y-4">
+        <h3 className="text-lg font-medium">No time-stamped items found</h3>
         <p className="text-muted-foreground text-center max-w-md">
-          Our AI is analyzing your meeting transcript and classifying content into discussions, questions, and actions. This may take a few moments.
+          Only items with time stamps (e.g., **[00:00:00]) are displayed in the review tabs.
         </p>
       </div>
     );
@@ -223,11 +196,12 @@ export function ReviewScreen({
 
       {/* Content Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="all">All ({meetingData.classifiedItems.length})</TabsTrigger>
-          <TabsTrigger value="discussion">Discussions ({counts.discussions})</TabsTrigger>
-          <TabsTrigger value="question">Questions ({counts.questions})</TabsTrigger>
-          <TabsTrigger value="action">Actions ({counts.actions})</TabsTrigger>
+        <TabsList className="flex w-full justify-between">
+          <TabsTrigger value="all" className="flex-1">All ({allTimePatternItems.length})</TabsTrigger>
+          <TabsTrigger value="discussion" className="flex-1">Discussions ({counts.discussions})</TabsTrigger>
+          <TabsTrigger value="question" className="flex-1">Questions ({counts.questions})</TabsTrigger>
+          <TabsTrigger value="action" className="flex-1">Actions ({counts.actions})</TabsTrigger>
+          <TabsTrigger value="noise" className="flex-1">Noise ({counts.noise})</TabsTrigger>
         </TabsList>
 
         <TabsContent value={activeTab} className="space-y-4 mt-6">
@@ -248,12 +222,18 @@ export function ReviewScreen({
                             by {item.speaker}
                           </span>
                         )}
+                        {/* Review Status */}
+                        {item.needsReview && (
+                          <Badge variant="destructive" className="text-xs">
+                            Needs Review
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="flex items-center gap-2">
                         <Select
                           value={item.type}
-                          onValueChange={(value: 'discussion' | 'question' | 'action') =>
+                          onValueChange={(value: 'discussion' | 'question' | 'action' | 'noise') =>
                             handleTypeChange(item.id, value)
                           }
                         >
@@ -264,6 +244,7 @@ export function ReviewScreen({
                             <SelectItem value="discussion">Discussion</SelectItem>
                             <SelectItem value="question">Question</SelectItem>
                             <SelectItem value="action">Action</SelectItem>
+                            <SelectItem value="noise">Noise</SelectItem>
                           </SelectContent>
                         </Select>
                         
@@ -311,6 +292,27 @@ export function ReviewScreen({
                         <p className="text-sm leading-relaxed">{item.content}</p>
                       )}
                     </div>
+
+                    {/* Additional Info */}
+                    <div className="space-y-2">
+                      {/* Tags */}
+                      {item.tags && item.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {item.tags.map((tag, tagIndex) => (
+                            <Badge key={tagIndex} variant="secondary" className="text-xs">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Raw Transcript Line */}
+                      {item.rawTranscriptLine && (
+                        <div className="text-xs text-muted-foreground bg-muted p-2 rounded">
+                          <span className="font-medium">Raw transcript:</span> {item.rawTranscriptLine}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -340,12 +342,44 @@ export function ReviewScreen({
         </Button>
 
         <Button
-          onClick={onNext}
+          onClick={handleContinueToActionAssignment}
           disabled={!canGoNext || meetingData.classifiedItems.length === 0}
         >
           Continue to Action Assignment
         </Button>
       </div>
+
+      {/* MVP Popup Modal */}
+      {showMvpPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" style={{backgroundColor: 'white'}}>
+            <h3 className="text-xl font-semibold text-gray-900 mb-4 text-center">
+              This is the end of MVP 1
+            </h3>
+            
+            <div className="space-y-3 mb-6">
+              <p className="text-sm text-gray-600">
+                In next MVP, this reviewed data will be sent to the backend AI engine to create a clean summary.
+              </p>
+              <p className="text-sm text-gray-600">
+                In next step user will get back the Action items identified by the backend with a score for criticality of the action.
+              </p>
+              <p className="text-sm text-gray-600">
+                The user can then assign each Action to respective meeting participants.
+              </p>
+            </div>
+            
+            <div className="text-center">
+              <Button
+                onClick={() => setShowMvpPopup(false)}
+                className="w-full"
+              >
+                Got it!
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

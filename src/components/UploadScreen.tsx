@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -6,7 +6,8 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Upload, FileText, X, Plus, Users, Paperclip, File } from 'lucide-react';
-import { MeetingData, Participant } from '../App';
+import { MeetingData, Participant, ClassifiedItem } from '../App';
+import { buildApiUrl, getApiEndpoint } from '../config/api';
 
 interface UploadScreenProps {
   meetingData: MeetingData;
@@ -17,17 +18,7 @@ interface UploadScreenProps {
   canGoPrevious: boolean;
 }
 
-// Mock participants for demonstration
-const availableParticipants: Participant[] = [
-  { id: '1', name: 'John Smith', email: 'john.smith@company.com' },
-  { id: '2', name: 'Sarah Johnson', email: 'sarah.johnson@company.com' },
-  { id: '3', name: 'Mike Chen', email: 'mike.chen@company.com' },
-  { id: '4', name: 'Emily Davis', email: 'emily.davis@company.com' },
-  { id: '5', name: 'Robert Wilson', email: 'robert.wilson@company.com' },
-  { id: '6', name: 'Lisa Anderson', email: 'lisa.anderson@company.com' },
-  { id: '7', name: 'David Brown', email: 'david.brown@company.com' },
-  { id: '8', name: 'Jennifer Garcia', email: 'jennifer.garcia@company.com' },
-];
+// Participants will be fetched from API
 
 export function UploadScreen({
   meetingData,
@@ -40,6 +31,36 @@ export function UploadScreen({
   const [dragOver, setDragOver] = useState(false);
   const [attachmentDragOver, setAttachmentDragOver] = useState(false);
   const [showParticipantDropdown, setShowParticipantDropdown] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [availableParticipants, setAvailableParticipants] = useState<Participant[]>([]);
+  const [loadingParticipants, setLoadingParticipants] = useState(true);
+  const [participantsError, setParticipantsError] = useState<string | null>(null);
+
+  // Fetch participants from API
+  useEffect(() => {
+    const fetchParticipants = async () => {
+      try {
+        setLoadingParticipants(true);
+        const response = await fetch(buildApiUrl(getApiEndpoint('GET_PARTICIPANTS')));
+        if (!response.ok) {
+          throw new Error(`Failed to fetch participants: ${response.status}`);
+        }
+        const data = await response.json();
+        setAvailableParticipants(data);
+      } catch (err: any) {
+        setParticipantsError(err.message || 'Failed to fetch participants');
+        // Fallback to empty array
+        setAvailableParticipants([]);
+      } finally {
+        setLoadingParticipants(false);
+      }
+    };
+
+    fetchParticipants();
+  }, []);
+
+
 
   const handleFileUpload = (file: File) => {
     setMeetingData({
@@ -51,7 +72,7 @@ export function UploadScreen({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
+    const files = Array.from(e.dataTransfer.files) as File[];
     if (files.length > 0) {
       handleFileUpload(files[0]);
     }
@@ -122,8 +143,157 @@ export function UploadScreen({
 
   const canProceed = meetingData.transcriptFile && meetingData.participants.length > 0 && meetingData.meetingTitle.trim();
 
+
+
+  const handleGenerateMinutes = async () => {
+    if (!canProceed || submitting) return;
+    setSubmitError(null);
+    setSubmitting(true);
+
+    try {
+      const form = new FormData();
+      form.append('meetingTitle', meetingData.meetingTitle);
+      form.append('meetingDate', meetingData.meetingDate);
+      form.append('participants', JSON.stringify(meetingData.participants));
+      if (meetingData.transcriptFile) {
+        form.append('transcriptFile', meetingData.transcriptFile, meetingData.transcriptFile.name);
+      }
+      for (const file of meetingData.attachments) {
+        form.append('attachments', file, file.name);
+      }
+
+      // Debug log: summarize payload being sent
+      try {
+        const summarized = Array.from(form.entries()).map(([key, value]) => {
+          if (typeof File !== 'undefined' && value instanceof File) {
+            const f = value as File;
+            return [key, { name: f.name, size: f.size, type: f.type }];
+          }
+          return [key, value];
+        });
+        // eslint-disable-next-line no-console
+        console.log('POST /api/upload_meeting_files payload', {
+          url: buildApiUrl(getApiEndpoint('UPLOAD_MEETING_FILES')),
+          formData: summarized,
+        });
+      } catch {}
+      
+      // Log the complete payload as it will be received by the backend
+      console.log('=== BACKEND PAYLOAD DEBUG ===');
+      console.log('Request URL:', buildApiUrl(getApiEndpoint('UPLOAD_MEETING_FILES')));
+      console.log('Request Method: POST');
+      console.log('Content-Type: multipart/form-data');
+      console.log('');
+      console.log('FormData entries:');
+      const entries = Array.from(form.entries());
+      console.log('Total entries found:', entries.length);
+      
+      // Log each entry with try-catch to prevent errors
+      entries.forEach(([key, value], index) => {
+        try {
+          console.log(`Entry ${index + 1} - Key: "${key}"`);
+          // Check if it's a file by looking for file properties
+          if (value && typeof value === 'object' && 'name' in value && 'size' in value) {
+            const f = value as any;
+            console.log(`  Value: File(${f.name}, ${f.size} bytes, ${f.type || 'unknown'})`);
+          } else {
+            console.log(`  Value: ${value}`);
+          }
+        } catch (error) {
+          console.log(`  Error processing entry ${index + 1}:`, error);
+        }
+      });
+      console.log('');
+      console.log('Form fields:');
+      console.log('  meetingTitle:', meetingData.meetingTitle);
+      console.log('  meetingDate:', meetingData.meetingDate);
+      console.log('  participants:', JSON.stringify(meetingData.participants));
+      console.log('FormData:', form);
+      console.log('=== END BACKEND PAYLOAD DEBUG ===');
+      console.log('');
+
+      const response = await fetch(buildApiUrl(getApiEndpoint('UPLOAD_MEETING_FILES')), {
+        method: 'POST',
+        body: form,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to upload meeting files (${response.status})`);
+      }
+
+      const data = await response.json();
+      console.log('Upload response:', data);
+
+      // Update meetingData with the classified items from the API response
+      setMeetingData({
+        ...meetingData,
+        classifiedItems: data.map((item: any, index: number) => ({
+          id: index.toString(),
+          type: item.category?.toLowerCase() || 'discussion',
+          content: item.notes || item.raw_transcript_line || '',
+          speaker: undefined, // API doesn't provide speaker info
+          confidence: item.confidence,
+          needsReview: item.needs_review,
+          tags: item.tags || [],
+          rawTranscriptLine: item.raw_transcript_line
+        }))
+      });
+
+      onNext();
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Unexpected error while uploading meeting files');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Loading Overlay */}
+      {submitting && (
+        <div 
+          className="fixed inset-0 bg-white z-[99999] flex items-center justify-center"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'white',
+            zIndex: 99999
+          }}
+        >
+          <div className="text-center max-w-lg mx-4">
+            {/* Enhanced Spinner */}
+            <div className="relative mb-8">
+              <div className="animate-spin rounded-full h-24 w-24 border-4 border-gray-200 mx-auto"></div>
+              <div className="animate-spin rounded-full h-24 w-24 border-4 border-primary border-t-transparent mx-auto absolute inset-0"></div>
+            </div>
+            
+            {/* Title */}
+            <h3 className="text-2xl font-bold text-gray-900 mb-4">
+              Processing Meeting Transcript
+            </h3>
+            
+            {/* Description */}
+            <p className="text-gray-600 text-lg leading-relaxed max-w-md mx-auto mb-6">
+              Please wait while our AI model analyzes and processes your meeting transcript. This may take a few minutes...
+            </p>
+            
+            {/* Progress indicator */}
+            <div className="flex justify-center">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
+                <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{animationDelay: '0.2s'}}></div>
+                <div className="w-2 h-2 bg-primary rounded-full animate-pulse" style={{animationDelay: '0.4s'}}></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="text-center mb-8">
         <h2 className="text-xl mb-2">Upload Meeting Transcript & Select Participants</h2>
         <p className="text-muted-foreground">
@@ -339,22 +509,44 @@ export function UploadScreen({
             {showParticipantDropdown && (
               <Card className="absolute top-full left-0 mt-2 w-80 z-10 max-h-60 overflow-y-auto">
                 <CardContent className="p-2">
-                  {availableParticipants
-                    .filter(p => !meetingData.participants.find(selected => selected.id === p.id))
-                    .map((participant) => (
-                      <div
-                        key={participant.id}
-                        className="flex items-center justify-between p-2 hover:bg-accent rounded cursor-pointer"
-                        onClick={() => addParticipant(participant)}
+                  {loadingParticipants ? (
+                    <div className="p-4 text-center">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto mb-2"></div>
+                      <p className="text-sm text-muted-foreground">Loading participants...</p>
+                    </div>
+                  ) : participantsError ? (
+                    <div className="p-4 text-center">
+                      <p className="text-sm text-red-600 mb-2">{participantsError}</p>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => window.location.reload()}
                       >
-                        <div>
-                          <p className="font-medium">{participant.name}</p>
-                          <p className="text-sm text-muted-foreground">{participant.email}</p>
-                        </div>
-                      </div>
-                    ))}
-                  {availableParticipants.filter(p => !meetingData.participants.find(selected => selected.id === p.id)).length === 0 && (
-                    <p className="text-sm text-muted-foreground p-2">All participants added</p>
+                        Retry
+                      </Button>
+                    </div>
+                  ) : availableParticipants.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-4 text-center">No participants available</p>
+                  ) : (
+                    <>
+                      {availableParticipants
+                        .filter(p => !meetingData.participants.find(selected => selected.id === p.id))
+                        .map((participant) => (
+                          <div
+                            key={participant.id}
+                            className="flex items-center justify-between p-2 hover:bg-accent rounded cursor-pointer"
+                            onClick={() => addParticipant(participant)}
+                          >
+                            <div>
+                              <p className="font-medium">{participant.name}</p>
+                              <p className="text-sm text-muted-foreground">{participant.email}</p>
+                            </div>
+                          </div>
+                        ))}
+                      {availableParticipants.filter(p => !meetingData.participants.find(selected => selected.id === p.id)).length === 0 && (
+                        <p className="text-sm text-muted-foreground p-2">All participants added</p>
+                      )}
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -400,14 +592,20 @@ export function UploadScreen({
         </Button>
 
         <Button
-          onClick={onNext}
-          disabled={!canProceed}
+          onClick={handleGenerateMinutes}
+          disabled={!canProceed || submitting}
           className="flex items-center gap-2"
         >
-          Generate Minutes
-          <span className="text-xs">({canProceed ? 'Ready' : 'Missing requirements'})</span>
+          {submitting ? 'Generating…' : 'Generate Minutes'}
+          {!submitting && (
+            <span className="text-xs">({canProceed ? 'Ready' : 'Missing requirements'})</span>
+          )}
         </Button>
       </div>
+
+      {submitError && (
+        <div className="text-sm text-red-600 pt-2">{submitError}</div>
+      )}
 
       {/* Click overlay to close dropdown */}
       {showParticipantDropdown && (

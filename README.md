@@ -52,7 +52,24 @@
   - After `npm run build`, run `npm start`
     - Electron will load files from `dist/` and `dist-electron/`
  
-  ## Configuration Overview
+  ## API Configuration
+
+The app uses a centralized API configuration system:
+
+- **Global Config**: `src/config/api.ts` contains all API endpoints and base URL
+- **Environment Variables**: Set `VITE_API_BASE_URL` in your `.env` file
+- **Usage**: Import `buildApiUrl()` and `getApiEndpoint()` in any component
+
+Example `.env` file:
+```bash
+# Development
+VITE_API_BASE_URL=http://localhost:4000
+
+# Production  
+VITE_API_BASE_URL=https://api.yourcompany.com
+```
+
+## Configuration Overview
  
   - `vite.config.ts`
     - Adds `vite-plugin-electron` with entries:

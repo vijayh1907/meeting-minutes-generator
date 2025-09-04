@@ -18,8 +18,12 @@ export type Participant = {
 export type ClassifiedItem = {
   id: string;
   content: string;
-  type: 'discussion' | 'question' | 'action';
+  type: 'discussion' | 'question' | 'action' | 'noise';
   speaker?: string;
+  confidence?: number;
+  needsReview?: boolean;
+  tags?: string[];
+  rawTranscriptLine?: string;
 };
 
 export type ActionItem = {
