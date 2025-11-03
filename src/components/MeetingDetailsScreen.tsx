@@ -23,7 +23,7 @@ import {
   CheckSquare,
   Bell
 } from 'lucide-react';
-import { HistoricalMeeting } from './Dashboard';
+import { HistoricalMeeting, ActionItemFromAPI } from './Dashboard';
 
 export interface ActionItemWithProgress {
   id: string;
@@ -166,7 +166,93 @@ Participants: John Smith, Sarah Johnson, Mike Chen, Emily Davis
 
 export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenProps) {
   const [activeTab, setActiveTab] = useState('overview');
-  const [actionItems, setActionItems] = useState(mockActionItems);
+  
+  // Convert API action items to component format
+  const parseFlexibleDate = (dateStr: string): string => {
+    // Supports formats like '04-11-2025' (DD-MM-YYYY format from backend) and ISO
+    if (!dateStr) return '';
+    // Already ISO-like (YYYY-MM-DD)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    
+    // Try to extract date from formats like "Tuesday, (04-11-2025)" or just "04-11-2025"
+    const dateMatch = dateStr.match(/(\d{2})-(\d{2})-(\d{4})/);
+    if (dateMatch) {
+      const [, day, month, year] = dateMatch; // Format: DD-MM-YYYY from backend
+      // Parse as DD-MM-YYYY since backend sends dates in this format
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    
+    return dateStr;
+  };
+
+  const convertActionItems = (apiActionItems: ActionItemFromAPI[]): ActionItemWithProgress[] => {
+    return apiActionItems.map((item) => {
+      // Parse due_date_calculated to get dates
+      let startDate = new Date(meeting.date).toISOString().split('T')[0]; // Use meeting date as start
+      let dueDate = parseFlexibleDate(item.due_date_calculated || item.due_date || '');
+      
+      // Determine status based on due date and current date
+      let status: 'completed' | 'in-progress' | 'overdue' | 'upcoming' = 'upcoming';
+      if (item.status === 'pending') {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (dueDate) {
+          const due = new Date(dueDate);
+          due.setHours(0, 0, 0, 0);
+          if (today > due) {
+            status = 'overdue';
+          } else if (today.getTime() === due.getTime()) {
+            status = 'in-progress';
+          } else {
+            status = 'upcoming';
+          }
+        } else {
+          status = 'upcoming';
+        }
+      } else if (item.status === 'completed') {
+        status = 'completed';
+      } else {
+        status = 'in-progress';
+      }
+      
+      return {
+        id: item.id,
+        content: item.description,
+        assignedTo: item.owner.email || item.id,
+        assigneeName: item.owner.name || 'Unassigned',
+        startDate: startDate,
+        dueDate: dueDate || startDate,
+        status: status,
+        priority: (item.priority || 'medium') as 'high' | 'medium' | 'low',
+        tags: item.tags || [],
+      };
+    });
+  };
+  
+  // Use API action items if available, otherwise use mock data
+  const initialActionItems = meeting.action_items && meeting.action_items.length > 0
+    ? convertActionItems(meeting.action_items)
+    : mockActionItems;
+  
+  const [actionItems, setActionItems] = useState<ActionItemWithProgress[]>(initialActionItems);
+  
+  // Update action items when meeting data changes
+  React.useEffect(() => {
+    const updated = meeting.action_items && meeting.action_items.length > 0
+      ? convertActionItems(meeting.action_items)
+      : mockActionItems;
+    setActionItems(updated);
+  }, [meeting.action_items]);
+  
+  // Get raw transcript from reviewed_classification_data
+  const getRawTranscript = () => {
+    if (meeting.reviewed_classification_data && meeting.reviewed_classification_data.length > 0) {
+      return meeting.reviewed_classification_data
+        .map(item => item.raw_transcript_line)
+        .join('\n');
+    }
+    return mockTranscript;
+  };
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -179,8 +265,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
   const calculateTimeProgress = (startDate: string, dueDate: string, status: string) => {
     const start = new Date(startDate);
     const due = new Date(dueDate);
-    // Set current date to January 30, 2025 for consistency
-    const now = new Date('2025-01-30');
+    const now = new Date();
     
     if (status === 'completed') return 100;
     if (status === 'upcoming') return 0;
@@ -197,8 +282,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
     if (status === 'completed') return 0;
     
     const due = new Date(dueDate);
-    // Set current date to January 30, 2025 for consistency
-    const now = new Date('2025-01-30');
+    const now = new Date();
     const diffTime = due.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -207,8 +291,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
 
   const getDaysFromStart = (startDate: string) => {
     const start = new Date(startDate);
-    // Set current date to January 30, 2025 for consistency
-    const now = new Date('2025-01-30');
+    const now = new Date();
     const diffTime = now.getTime() - start.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -328,7 +411,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Discussions</p>
-                    <p className="text-2xl font-semibold">{meeting.discussionCount}</p>
+                    <p className="text-2xl font-semibold">{meeting.discussionCount || 0}</p>
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -345,7 +428,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Questions</p>
-                    <p className="text-2xl font-semibold">{meeting.questionCount}</p>
+                    <p className="text-2xl font-semibold">{meeting.questionCount || 0}</p>
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -362,7 +445,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Action Items</p>
-                    <p className="text-2xl font-semibold">{actionItems.length}</p>
+                    <p className="text-2xl font-semibold">{meeting.actionCount || actionItems.length}</p>
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -603,7 +686,7 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
             <CardContent>
               <div className="bg-muted/50 p-4 rounded-lg">
                 <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
-                  {mockTranscript}
+                  {getRawTranscript()}
                 </pre>
               </div>
             </CardContent>
@@ -631,37 +714,46 @@ export function MeetingDetailsScreen({ meeting, onBack }: MeetingDetailsScreenPr
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="prose max-w-none">
-                <h3>Meeting Summary</h3>
-                <p>
-                  The Q1 Strategic Planning Session was conducted to review current progress and establish priorities for the upcoming quarter. 
-                  The team discussed user acquisition improvements, technical achievements, design progress, and outlined key action items for the next phase.
-                </p>
+              {meeting.MoM_content ? (
+                <div className="bg-muted/50 p-4 rounded-lg">
+                  <pre className="text-sm whitespace-pre-wrap leading-relaxed font-sans">
+                    {meeting.MoM_content}
+                  </pre>
+                </div>
+              ) : (
+                <div className="prose max-w-none">
+                  <h3>Meeting Summary</h3>
+                  <p>
+                    The Q1 Strategic Planning Session was conducted to review current progress and establish priorities for the upcoming quarter. 
+                    The team discussed user acquisition improvements, technical achievements, design progress, and outlined key action items for the next phase.
+                  </p>
 
-                <h3>Key Discussions</h3>
-                <ul>
-                  <li>User acquisition increased by 42% compared to last quarter</li>
-                  <li>Five major feature updates successfully deployed</li>
-                  <li>System stability improvements implemented with 99.8% uptime</li>
-                  <li>Positive feedback received from recent usability studies</li>
-                  <li>Q1 budget allocation strategy finalized</li>
-                  <li>Team development and training initiatives planned for new tools</li>
-                </ul>
+                  <h3>Key Discussions</h3>
+                  <ul>
+                    <li>User acquisition increased by 42% compared to last quarter</li>
+                    <li>Five major feature updates successfully deployed</li>
+                    <li>System stability improvements implemented with 99.8% uptime</li>
+                    <li>Positive feedback received from recent usability studies</li>
+                    <li>Q1 budget allocation strategy finalized</li>
+                    <li>Team development and training initiatives planned for new tools</li>
+                  </ul>
 
-                <h3>Action Items Assigned</h3>
-                <ul>
-                  <li><strong>Sarah Johnson:</strong> Conduct competitive analysis research and user interviews</li>
-                  <li><strong>Mike Chen:</strong> Set up automated testing pipeline and update API documentation</li>
-                  <li><strong>Emily Davis:</strong> Design mobile app mockups and review marketing content</li>
-                  <li><strong>John Smith:</strong> Finalize Q1 budget allocation and plan team training sessions</li>
-                </ul>
+                  <h3>Action Items Assigned</h3>
+                  <ul>
+                    {actionItems.map((action) => (
+                      <li key={action.id}>
+                        <strong>{action.assigneeName}:</strong> {action.content}
+                      </li>
+                    ))}
+                  </ul>
 
-                <h3>Next Steps</h3>
-                <p>
-                  All action items have been assigned with specific timelines. The team will reconvene in two weeks to review progress 
-                  and address any blockers. Regular check-ins will be scheduled for ongoing projects.
-                </p>
-              </div>
+                  <h3>Next Steps</h3>
+                  <p>
+                    All action items have been assigned with specific timelines. The team will reconvene in two weeks to review progress 
+                    and address any blockers. Regular check-ins will be scheduled for ongoing projects.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

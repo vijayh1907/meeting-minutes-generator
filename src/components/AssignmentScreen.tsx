@@ -5,8 +5,9 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
-import { CheckSquare, Calendar, User, AlertCircle } from 'lucide-react';
+import { CheckSquare, Calendar, User, AlertCircle, Loader2 } from 'lucide-react';
 import { MeetingData, ActionItem } from '../App';
+import { buildApiUrl, getApiEndpoint } from '../config/api';
 
 interface AssignmentScreenProps {
   meetingData: MeetingData;
@@ -88,6 +89,194 @@ export function AssignmentScreen({
 
   const assignmentSummary = getAssignmentSummary();
   const allAssigned = meetingData.actionItems.every(action => action.assignedTo);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const handleGenerateEmailDraft = async () => {
+    if (submitting || !allAssigned) return;
+    setSubmitError(null);
+    setSubmitting(true);
+
+    try {
+      // Get the original API response structure to extract original action items data
+      const originalResponse = meetingData.lastApiResponse;
+      
+      if (!originalResponse || !originalResponse.identified_action_items) {
+        throw new Error('Missing original API response data. Please go back and submit the review again.');
+      }
+
+      // Get original action items from the nested structure
+      const originalActionItems = originalResponse.identified_action_items?.action_items?.action_items || [];
+      
+      // Build the new simplified payload structure
+      // New structure: { action_items: [...], meeting_date: "...", total_items: N }
+      const actionItems = meetingData.actionItems.map((userAction) => {
+        // Find the original action item to get fields like priority, status, tags
+        const originalItem = originalActionItems.find((item: any) => item.id === userAction.id);
+        
+        // Find the participant to get email
+        const participant = meetingData.participants.find(p => p.id === userAction.assignedTo);
+        
+        // Format due_date
+        let dueDate = 'Not specified';
+        if (userAction.dueDate) {
+          const date = new Date(userAction.dueDate);
+          const weekday = date.toLocaleDateString('en-US', { weekday: 'long' });
+          dueDate = weekday; // Just the weekday name like "Friday"
+        }
+        
+        // Build the action item with user's changes
+        return {
+          id: userAction.id,
+          description: userAction.content,
+          owner: {
+            name: participant?.name || userAction.assigneeName || 'Not specified',
+            email: participant?.email || null,
+          },
+          due_date: dueDate,
+          priority: originalItem?.priority || 'medium', // Preserve original priority or default
+          status: originalItem?.status || 'pending', // Preserve original status or default
+          tags: originalItem?.tags || [], // Preserve original tags or default to empty array
+        };
+      });
+      
+      // Get meeting date from original response or use meetingData.meetingDate
+      const meetingDate = originalResponse.identified_action_items?.action_items?.meeting_date || 
+                          meetingData.meetingDate ||
+                          'Not specified';
+      
+      // Construct the new simplified payload
+      const payload = {
+        action_items: actionItems,
+        meeting_date: meetingDate,
+        total_items: actionItems.length,
+      };
+
+      // Debug log: summarize payload being sent
+      console.log('=== API REQUEST PAYLOAD DEBUG ===');
+      console.log('Request URL:', buildApiUrl(getApiEndpoint('REVIEW_AND_ASSIGN_ACTION_ITEMS')));
+      console.log('Request Method: POST');
+      console.log('Content-Type: application/json');
+      console.log('');
+      console.log('Payload (Full):', payload);
+      console.log('');
+      console.log('Payload (Formatted JSON):', JSON.stringify(payload, null, 2));
+      console.log('');
+      console.log('Action Items Count:', payload.action_items.length);
+      console.log('Action Items:', payload.action_items);
+      console.log('Meeting Date:', payload.meeting_date);
+      console.log('Total Items:', payload.total_items);
+      console.log('=== END API REQUEST PAYLOAD DEBUG ===');
+      console.log('');
+
+      const response = await fetch(buildApiUrl(getApiEndpoint('REVIEW_AND_ASSIGN_ACTION_ITEMS')), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        // Try to get error details from response body
+        let errorMessage = `Failed to submit assigned action items (${response.status} ${response.statusText})`;
+        try {
+          const errorText = await response.text();
+          console.error('API Error Response (raw text):', errorText);
+          
+          if (errorText) {
+            try {
+              const errorData = JSON.parse(errorText);
+              console.error('API Error Response (parsed JSON):', errorData);
+              
+              if (errorData.detail && Array.isArray(errorData.detail)) {
+                const validationErrors = errorData.detail.map((err: any) => {
+                  const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : 'unknown';
+                  return `${field}: ${err.msg || err.message || 'validation error'}`;
+                }).join(', ');
+                errorMessage += `: ${validationErrors}`;
+              } else if (errorData.message) {
+                errorMessage += `: ${errorData.message}`;
+              } else if (errorData.error) {
+                errorMessage += `: ${errorData.error}`;
+              } else if (errorData.detail) {
+                errorMessage += `: ${errorData.detail}`;
+              } else {
+                errorMessage += `: ${errorText}`;
+              }
+            } catch (parseError) {
+              errorMessage += `: ${errorText}`;
+            }
+          }
+        } catch (e) {
+          console.error('Could not read error response:', e);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const responseData = await response.json();
+      
+      // Enhanced console logging of API response
+      console.log('=== API RESPONSE DEBUG ===');
+      console.log('Endpoint: POST /review_and_assign_action_items');
+      console.log('Request URL:', buildApiUrl(getApiEndpoint('REVIEW_AND_ASSIGN_ACTION_ITEMS')));
+      console.log('Response Status:', response.status, response.statusText);
+      console.log('Response Headers:', Object.fromEntries(response.headers.entries()));
+      console.log('');
+      console.log('Response Data (Full Object):', responseData);
+      console.log('');
+      console.log('Response Data (Formatted JSON):', JSON.stringify(responseData, null, 2));
+      console.log('');
+      console.log('Response Data Keys:', Object.keys(responseData));
+      console.log('');
+      
+      // Log nested structure if it exists
+      if (responseData.identified_action_items) {
+        console.log('identified_action_items keys:', Object.keys(responseData.identified_action_items));
+        if (responseData.identified_action_items.action_items) {
+          console.log('identified_action_items.action_items keys:', Object.keys(responseData.identified_action_items.action_items));
+          if (responseData.identified_action_items.action_items.action_items) {
+            console.log('Action Items Count:', responseData.identified_action_items.action_items.action_items.length);
+            console.log('Action Items:', responseData.identified_action_items.action_items.action_items);
+          }
+        }
+      }
+      
+      // Log other potential top-level keys for planning
+      if (responseData.email_draft) {
+        console.log('email_draft found:', responseData.email_draft);
+      }
+      if (responseData.email_content) {
+        console.log('email_content found:', responseData.email_content);
+      }
+      if (responseData.minutes_of_meeting) {
+        console.log('minutes_of_meeting found:', responseData.minutes_of_meeting);
+      }
+      if (responseData.summary) {
+        console.log('summary found:', responseData.summary);
+      }
+      
+      console.log('=== END API RESPONSE DEBUG ===');
+      console.log('');
+      console.log('📧 RESPONSE RECEIVED - Ready to integrate in EmailPreviewScreen');
+      console.log('💡 Use this response structure to populate the email preview screen');
+      console.log('');
+
+      // Store the response in meetingData for use in EmailPreviewScreen
+      setMeetingData({
+        ...meetingData,
+        emailDraftResponse: responseData,
+      });
+
+      // Navigate to the next screen (EmailPreviewScreen)
+      onNext();
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Unexpected error while submitting assigned action items');
+      console.error('Error submitting assigned action items:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -234,15 +423,31 @@ export function AssignmentScreen({
         </Button>
 
         <Button
-          onClick={onNext}
-          disabled={!canGoNext || !allAssigned}
+          onClick={handleGenerateEmailDraft}
+          disabled={!canGoNext || !allAssigned || submitting}
         >
-          Generate Email Draft
-          {!allAssigned && (
-            <span className="text-xs ml-2">(All actions must be assigned)</span>
+          {submitting ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            <>
+              Generate Email Draft
+              {!allAssigned && (
+                <span className="text-xs ml-2">(All actions must be assigned)</span>
+              )}
+            </>
           )}
         </Button>
       </div>
+
+      {/* Error Message */}
+      {submitError && (
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-600">{submitError}</p>
+        </div>
+      )}
     </div>
   );
 }

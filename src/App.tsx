@@ -42,6 +42,8 @@ export type MeetingData = {
   meetingTitle: string;
   meetingDate: string;
   attachments: File[];
+  lastApiResponse?: any; // Store the full API response from review_content_classify
+  emailDraftResponse?: any; // Store the API response from review_and_assign_action_items
 };
 
 export default function App() {
@@ -246,6 +248,7 @@ export default function App() {
             onPrevious={handlePrevious}
             canGoNext={currentStep < steps.length - 1}
             canGoPrevious={currentStep > 0}
+            {...(currentStep === steps.length - 1 && { onBackToDashboard: handleBackToDashboard })}
           />
         </div>
       </div>

@@ -25,20 +25,48 @@ import {
 import { Participant, ActionItem } from '../App';
 import { buildApiUrl, getApiEndpoint } from '../config/api';
 
+export interface ReviewedClassificationData {
+  raw_transcript_line: string;
+  category: string;
+  tags: string[];
+  confidence: number;
+  notes: string;
+  meeting_id: string;
+  old_category?: string;
+}
+
+export interface ActionItemFromAPI {
+  id: string;
+  description: string;
+  owner: {
+    name: string;
+    email: string | null;
+  };
+  due_date: string;
+  due_date_calculated: string | null;
+  status: string;
+  created_from_meeting: string;
+  priority: string;
+  tags: string[];
+}
+
 export interface HistoricalMeeting {
   id: string;
   title: string;
   date: string;
   status: 'completed' | 'processing' | 'failed' | 'draft';
   participants: Participant[];
-  discussionCount: number;
-  questionCount: number;
-  actionCount: number;
+  discussionCount?: number;
+  questionCount?: number;
+  actionCount?: number;
   fileName: string;
-  fileSize: string;
+  fileSize: string | number;
   createdAt: string;
   lastModified: string;
   emailSent: boolean;
+  reviewed_classification_data?: ReviewedClassificationData[];
+  MoM_content?: string;
+  action_items?: ActionItemFromAPI[];
 }
 
 interface DashboardProps {
@@ -68,7 +96,37 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
           throw new Error(`Failed to fetch meetings: ${response.status}`);
         }
         const data = await response.json();
-        setMeetings(data);
+        // Normalize meetings to support newer API shape (status/counts may be missing)
+        const normalized: HistoricalMeeting[] = (Array.isArray(data) ? data : []).map((m: any) => {
+          // Normalize status to lowercase and infer when missing
+          const rawStatus = (m.status || '').toString().trim().toLowerCase();
+          const inferredStatus = (m.emailSent || (Array.isArray(m.action_items) && m.action_items.length > 0))
+            ? 'completed'
+            : 'processing';
+          const derivedStatus: HistoricalMeeting['status'] = (rawStatus as any) || inferredStatus;
+
+          const reviewed = Array.isArray(m.reviewed_classification_data) ? m.reviewed_classification_data : [];
+          const actionItems = Array.isArray(m.action_items) ? m.action_items : [];
+
+          const discussionCount = typeof m.discussionCount === 'number'
+            ? m.discussionCount
+            : reviewed.filter((i: any) => String(i.category || '').toLowerCase() === 'discussion').length;
+
+          const questionCount = typeof m.questionCount === 'number'
+            ? m.questionCount
+            : reviewed.filter((i: any) => String(i.category || '').toLowerCase() === 'question').length;
+
+          const actionCount = typeof m.actionCount === 'number' ? m.actionCount : actionItems.length;
+
+          return {
+            ...m,
+            status: derivedStatus,
+            discussionCount,
+            questionCount,
+            actionCount,
+          } as HistoricalMeeting;
+        });
+        setMeetings(normalized);
       } catch (err: any) {
         setError(err.message || 'Failed to fetch meetings');
         // Fallback to empty array
@@ -316,7 +374,7 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
                     </div>
                     <div className="flex items-center gap-1">
                       <FileText className="w-4 h-4" />
-                      <span>{meeting.fileName} ({meeting.fileSize})</span>
+                      <span>{meeting.fileName} ({typeof meeting.fileSize === 'number' ? `${(meeting.fileSize / 1024).toFixed(1)} KB` : meeting.fileSize})</span>
                     </div>
                   </div>
 
@@ -338,20 +396,26 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
                   </div>
 
                   {/* Stats */}
-                  {meeting.status === 'completed' && (
+                  {(meeting.status === 'completed' || meeting.discussionCount !== undefined) && (
                     <div className="flex items-center gap-6 text-sm">
-                      <div className="flex items-center gap-1 text-blue-600">
-                        <MessageSquare className="w-4 h-4" />
-                        <span>{meeting.discussionCount} discussions</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-orange-600">
-                        <HelpCircle className="w-4 h-4" />
-                        <span>{meeting.questionCount} questions</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-green-600">
-                        <CheckSquare className="w-4 h-4" />
-                        <span>{meeting.actionCount} actions</span>
-                      </div>
+                      {meeting.discussionCount !== undefined && (
+                        <div className="flex items-center gap-1 text-blue-600">
+                          <MessageSquare className="w-4 h-4" />
+                          <span>{meeting.discussionCount} discussions</span>
+                        </div>
+                      )}
+                      {meeting.questionCount !== undefined && (
+                        <div className="flex items-center gap-1 text-orange-600">
+                          <HelpCircle className="w-4 h-4" />
+                          <span>{meeting.questionCount} questions</span>
+                        </div>
+                      )}
+                      {meeting.actionCount !== undefined && (
+                        <div className="flex items-center gap-1 text-green-600">
+                          <CheckSquare className="w-4 h-4" />
+                          <span>{meeting.actionCount} actions</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -371,19 +435,16 @@ export function Dashboard({ onStartNewMeeting, onViewMeeting }: DashboardProps) 
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
-                  {meeting.status === 'completed' && (
-                    <>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => onViewMeeting(meeting)}
-                      >
-                        <Eye className="w-4 h-4 mr-1" />
-                        View
-                      </Button>
+                  {/* Add View button to all meetings */}
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => onViewMeeting(meeting)}
+                  >
+                    <Eye className="w-4 h-4 mr-1" />
+                    View
+                  </Button>
 
-                    </>
-                  )}
                   {meeting.status === 'draft' && (
                     <Button variant="outline" size="sm">
                       <Edit className="w-4 h-4 mr-1" />

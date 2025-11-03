@@ -5,8 +5,9 @@ import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { MessageSquare, HelpCircle, CheckSquare, Edit, Save, X, VolumeX } from 'lucide-react';
-import { MeetingData, ClassifiedItem } from '../App';
+import { MessageSquare, HelpCircle, CheckSquare, Edit, Save, X, VolumeX, Loader2 } from 'lucide-react';
+import { MeetingData, ClassifiedItem, ActionItem } from '../App';
+import { buildApiUrl, getApiEndpoint } from '../config/api';
 
 interface ReviewScreenProps {
   meetingData: MeetingData;
@@ -30,8 +31,8 @@ export function ReviewScreen({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [activeTab, setActiveTab] = useState('all');
-  const [processing] = useState(false);
-  const [showMvpPopup, setShowMvpPopup] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleEdit = (item: ClassifiedItem) => {
     setEditingId(item.id);
@@ -63,8 +64,181 @@ export function ReviewScreen({
     });
   };
 
-  const handleContinueToActionAssignment = () => {
-    setShowMvpPopup(true);
+  const handleContinueToActionAssignment = async () => {
+    if (submitting) return;
+    setSubmitError(null);
+    setSubmitting(true);
+
+    try {
+      // Prepare the payload as an array matching the API structure
+      // API expects: [{ raw_transcript_line, category, tags, confidence, notes, meeting_id }, ...]
+      const payload = meetingData.classifiedItems.map(item => {
+        // Capitalize category: "discussion" -> "Discussion", "question" -> "Question", "action" -> "Action", "noise" -> "Noise"
+        const category = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+        
+        return {
+          raw_transcript_line: item.rawTranscriptLine || '',
+          category: category,
+          tags: Array.isArray(item.tags) ? item.tags : (item.tags ? [item.tags] : []),
+          confidence: typeof item.confidence === 'number' ? item.confidence : (item.confidence || 0),
+          notes: item.content || '',
+          meeting_id: meetingData.meetingTitle || '', // Always include meeting_id
+        };
+      });
+
+      // Debug log: summarize payload being sent
+      console.log('=== API REQUEST PAYLOAD DEBUG ===');
+      console.log('Request URL:', buildApiUrl(getApiEndpoint('SUBMIT_REVIEWED_DATA')));
+      console.log('Request Method: POST');
+      console.log('Content-Type: application/json');
+      console.log('');
+      console.log('Payload (Array of items):', payload);
+      console.log('');
+      console.log('Payload (Formatted JSON):', JSON.stringify(payload, null, 2));
+      console.log('');
+      console.log(`Total items in payload: ${payload.length}`);
+      if (payload.length > 0) {
+        console.log('Sample item structure:', payload[0]);
+      }
+      console.log('=== END API REQUEST PAYLOAD DEBUG ===');
+      console.log('');
+
+      const response = await fetch(buildApiUrl(getApiEndpoint('SUBMIT_REVIEWED_DATA')), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        // Try to get error details from response body
+        let errorMessage = `Failed to submit reviewed data (${response.status} ${response.statusText})`;
+        try {
+          const errorText = await response.text();
+          console.error('API Error Response (raw text):', errorText);
+          
+          if (errorText) {
+            try {
+              const errorData = JSON.parse(errorText);
+              console.error('API Error Response (parsed JSON):', errorData);
+              
+              if (errorData.detail && Array.isArray(errorData.detail)) {
+                // Handle Pydantic/FastAPI validation error format
+                const validationErrors = errorData.detail.map((err: any) => {
+                  const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : 'unknown';
+                  return `${field}: ${err.msg || err.message || 'validation error'}`;
+                }).join(', ');
+                errorMessage += `: ${validationErrors}`;
+              } else if (errorData.message) {
+                errorMessage += `: ${errorData.message}`;
+              } else if (errorData.error) {
+                errorMessage += `: ${errorData.error}`;
+              } else if (errorData.detail) {
+                errorMessage += `: ${errorData.detail}`;
+              } else {
+                errorMessage += `: ${errorText}`;
+              }
+            } catch (parseError) {
+              errorMessage += `: ${errorText}`;
+            }
+          }
+        } catch (e) {
+          console.error('Could not read error response:', e);
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      
+      // Enhanced console logging of API response
+      console.log('=== API RESPONSE DEBUG ===');
+      console.log('Request URL:', buildApiUrl(getApiEndpoint('SUBMIT_REVIEWED_DATA')));
+      console.log('Response Status:', response.status, response.statusText);
+      console.log('Response Headers:', Object.fromEntries(response.headers.entries()));
+      console.log('');
+      console.log('Response Data (Full):', data);
+      console.log('');
+      console.log('Response Data (Formatted):', JSON.stringify(data, null, 2));
+      console.log('');
+      
+      // Check for nested path: identified_action_items.action_items.action_items
+      let actionItemsArray: any[] = [];
+      if (data.identified_action_items?.action_items?.action_items && Array.isArray(data.identified_action_items.action_items.action_items)) {
+        actionItemsArray = data.identified_action_items.action_items.action_items;
+        console.log(`Action Items Count: ${actionItemsArray.length}`);
+        console.log('Action Items (from identified_action_items.action_items.action_items):');
+        actionItemsArray.forEach((item: any, index: number) => {
+          console.log(`  [${index + 1}]`, item);
+        });
+      } else if (data.action_items && Array.isArray(data.action_items)) {
+        actionItemsArray = data.action_items;
+        console.log(`Action Items Count: ${actionItemsArray.length}`);
+        console.log('Action Items (from action_items):');
+        actionItemsArray.forEach((item: any, index: number) => {
+          console.log(`  [${index + 1}]`, item);
+        });
+      } else if (data.actionItems && Array.isArray(data.actionItems)) {
+        actionItemsArray = data.actionItems;
+        console.log(`Action Items Count (camelCase): ${actionItemsArray.length}`);
+        console.log('Action Items (camelCase):');
+        actionItemsArray.forEach((item: any, index: number) => {
+          console.log(`  [${index + 1}]`, item);
+        });
+      } else {
+        console.log('No action_items found in expected paths');
+        console.log('Available keys in response:', Object.keys(data));
+        if (data.identified_action_items) {
+          console.log('identified_action_items keys:', Object.keys(data.identified_action_items));
+          if (data.identified_action_items.action_items) {
+            console.log('identified_action_items.action_items keys:', Object.keys(data.identified_action_items.action_items));
+          }
+        }
+      }
+      console.log('=== END API RESPONSE DEBUG ===');
+      console.log('');
+
+      // Parse the API response and map to ActionItem format
+      // API response structure:
+      // { identified_action_items: { action_items: { action_items: [{ id, description, owner: { name, email }, due_date, due_date_calculated, ... }, ...] } } }
+      // Fallback to: { action_items: [...] } or { actionItems: [...] }
+      const actionItems: ActionItem[] = actionItemsArray.map((item: any, index: number) => {
+        // Map owner info to assignedTo and assigneeName
+        const owner = item.owner || {};
+        const ownerName = owner.name || 'Not specified';
+        const ownerEmail = owner.email || '';
+        
+        // Use email as assignedTo if available, otherwise use id or empty string
+        const assignedTo = ownerEmail || item.id || index.toString();
+        
+        // Use due_date_calculated (ISO format) if available, otherwise use due_date
+        const dueDate = item.due_date_calculated || item.due_date || '';
+        
+        return {
+          id: item.id || index.toString(),
+          content: item.description || item.content || '',
+          assignedTo: assignedTo,
+          assigneeName: ownerName === 'Not specified' ? 'Unassigned' : ownerName,
+          dueDate: dueDate || undefined,
+        };
+      });
+
+      // Update meetingData with action items from API response
+      // Also store the full API response so we can reconstruct it later with user changes
+      setMeetingData({
+        ...meetingData,
+        actionItems,
+        lastApiResponse: data, // Store the full response structure
+      });
+
+      // Navigate to the next screen (AssignmentScreen)
+      onNext();
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Unexpected error while submitting reviewed data');
+      console.error('Error submitting reviewed data:', err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getFilteredItems = () => {
@@ -343,41 +517,23 @@ export function ReviewScreen({
 
         <Button
           onClick={handleContinueToActionAssignment}
-          disabled={!canGoNext || meetingData.classifiedItems.length === 0}
+          disabled={!canGoNext || meetingData.classifiedItems.length === 0 || submitting}
         >
-          Continue to Action Assignment
+          {submitting ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            'Continue to Action Assignment'
+          )}
         </Button>
       </div>
 
-      {/* MVP Popup Modal */}
-      {showMvpPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" style={{backgroundColor: 'white'}}>
-            <h3 className="text-xl font-semibold text-gray-900 mb-4 text-center">
-              This is the end of MVP 1
-            </h3>
-            
-            <div className="space-y-3 mb-6">
-              <p className="text-sm text-gray-600">
-                In next MVP, this reviewed data will be sent to the backend AI engine to create a clean summary.
-              </p>
-              <p className="text-sm text-gray-600">
-                In next step user will get back the Action items identified by the backend with a score for criticality of the action.
-              </p>
-              <p className="text-sm text-gray-600">
-                The user can then assign each Action to respective meeting participants.
-              </p>
-            </div>
-            
-            <div className="text-center">
-              <Button
-                onClick={() => setShowMvpPopup(false)}
-                className="w-full"
-              >
-                Got it!
-              </Button>
-            </div>
-          </div>
+      {/* Error Message */}
+      {submitError && (
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-600">{submitError}</p>
         </div>
       )}
     </div>
